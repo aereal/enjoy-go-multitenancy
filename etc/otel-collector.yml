@@ -1,0 +1,18 @@
+---
+receivers:
+  otlp:
+    protocols:
+      grpc:
+processors:
+exporters:
+  zipkin:
+    endpoint: "${ZIPKIN_ORIGIN}/api/v2/spans"
+    tls:
+      insecure: true
+service:
+  pipelines:
+    traces:
+      receivers:
+        - otlp
+      exporters:
+        - zipkin

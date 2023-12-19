@@ -1,0 +1,28 @@
+---
+
+version: '3'
+services:
+  zipkin:
+    image: 'ghcr.io/openzipkin/zipkin:latest'
+    ports:
+      - '9411:9411'
+  otel-collector:
+    image: 'ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.91.0'
+    ports:
+      - '4317:4317'
+    volumes:
+      - './etc/otel-collector.yml:/etc/otelcol-contrib/config.yaml'
+    environment:
+      ZIPKIN_ORIGIN: 'http://zipkin:9411'
+  mysql:
+    image: 'mysql:8.2.0'
+    ports:
+      - '3306:3306'
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: 'true'
+      MYSQL_DATABASE: multi_tenancy_app
+      MYSQL_INITDB_SKIP_TZINFO: 'true'
+      TZ: 'Asia/Tokyo'
+    volumes:
+      - './etc/ddl.sql:/docker-entrypoint-initdb.d/00_ddl.sql'
+      - './var/db:/var/lib/mysql'
