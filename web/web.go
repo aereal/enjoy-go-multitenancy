@@ -105,7 +105,7 @@ func (s *Server) handlePostUsers() http.Handler {
 func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/users", s.handlePostUsers())
-	handler := apartment.InjectTenantFromHeader()(apartment.Middleware(s.apHandler)(mux))
+	handler := logging.Middleware()(apartment.InjectTenantFromHeader()(apartment.Middleware(s.apHandler)(mux)))
 	return otelhttp.NewHandler(handler, "server",
 		otelhttp.WithPublicEndpoint(),
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string { return fmt.Sprintf("%s %s", r.Method, r.URL.Path) }),
