@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dimfeld/httptreemux/v5"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.uber.org/zap"
@@ -73,11 +74,6 @@ type errorResponse struct {
 
 func (s *Server) handlePostUsers() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-
 		ctx := r.Context()
 		logger := logging.FromContext(ctx)
 		logger.Info("handle POST /users")
@@ -103,10 +99,17 @@ func (s *Server) handlePostUsers() http.Handler {
 }
 
 func (s *Server) handler() http.Handler {
-	mux := http.NewServeMux()
-	mux.Handle("/users", s.handlePostUsers())
-	handler := logging.Middleware()(apartment.InjectTenantFromHeader()(apartment.Middleware(s.apHandler)(mux)))
-	return otelhttp.NewHandler(handler, "server",
+	m := httptreemux.NewContextMux()
+	m.UseHandler(withOtel)
+	m.UseHandler(logging.Middleware())
+	m.UseHandler(apartment.InjectTenantFromHeader())
+	m.UseHandler(apartment.Middleware(s.apHandler))
+	m.Handler(http.MethodPost, "/users", s.handlePostUsers())
+	return m
+}
+
+func withOtel(next http.Handler) http.Handler {
+	return otelhttp.NewHandler(next, "server",
 		otelhttp.WithPublicEndpoint(),
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string { return fmt.Sprintf("%s %s", r.Method, r.URL.Path) }),
 		otelhttp.WithClientTrace(func(ctx context.Context) *httptrace.ClientTrace { return otelhttptrace.NewClientTrace(ctx) }))

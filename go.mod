@@ -4,6 +4,7 @@ go 1.21.5
 
 require (
 	github.com/XSAM/otelsql v0.27.0
+	github.com/dimfeld/httptreemux/v5 v5.5.0
 	github.com/doug-martin/goqu/v9 v9.19.0
 	github.com/go-sql-driver/mysql v1.7.1
 	github.com/jmoiron/sqlx v1.3.5
