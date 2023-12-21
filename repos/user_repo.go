@@ -60,10 +60,11 @@ func (r *UserRepo) RegisterUser(ctx context.Context, user *UserToRegister) (err 
 	ctx, span := r.tracer.Start(ctx, "RegisterUser")
 	defer span.End()
 	defer func() {
-		span.SetStatus(codes.Ok, "")
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
+		} else {
+			span.SetStatus(codes.Ok, "")
 		}
 	}()
 
@@ -94,10 +95,11 @@ func (r *UserRepo) FetchUserByName(ctx context.Context, name string) (_ *User, e
 	ctx, span := r.tracer.Start(ctx, "FetchUserByName", trace.WithAttributes(attribute.String("user.name", name)))
 	defer span.End()
 	defer func() {
-		span.SetStatus(codes.Ok, "")
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
+		} else {
+			span.SetStatus(codes.Ok, "")
 		}
 	}()
 
