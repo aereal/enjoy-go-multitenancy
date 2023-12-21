@@ -62,9 +62,13 @@ func (s *Server) handler() http.Handler {
 
 func (s *Server) Start(ctx context.Context) error {
 	logger := logging.FromContext(ctx)
+	reqLogger := logger.Named("http")
 	hs := &http.Server{
 		Handler: s.handler(),
 		Addr:    net.JoinHostPort("localhost", s.port),
+		BaseContext: func(l net.Listener) context.Context {
+			return logging.WithLogger(context.Background(), reqLogger)
+		},
 	}
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
