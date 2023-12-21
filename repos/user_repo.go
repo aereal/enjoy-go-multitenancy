@@ -34,12 +34,16 @@ func NewUserRepo(optFns ...NewUserRepoOption) *UserRepo {
 	for _, f := range optFns {
 		f(r)
 	}
+	r.tables.users = goqu.Dialect("mysql").From("users")
 	return r
 }
 
 type UserRepo struct {
 	tracer  trace.Tracer
 	manager *apartment.Manager
+	tables  struct {
+		users *goqu.SelectDataset
+	}
 }
 
 type UserToRegister struct {
@@ -72,7 +76,7 @@ func (r *UserRepo) RegisterUser(ctx context.Context, user *UserToRegister) (err 
 		return ErrUserNameRequired
 	}
 
-	query, args, err := goqu.Dialect("mysql").Insert("users").
+	query, args, err := r.tables.users.Insert().
 		Prepared(true).
 		Rows(&userToRegisterDTO{UserToRegister: user, ID: xid.New().String()}).
 		ToSQL()
@@ -107,7 +111,7 @@ func (r *UserRepo) FetchUserByName(ctx context.Context, name string) (_ *User, e
 		return nil, ErrUserNameRequired
 	}
 
-	query, args, err := goqu.Dialect("mysql").From("users").
+	query, args, err := r.tables.users.
 		Where(goqu.C("name").Eq(name)).
 		Limit(1).
 		ToSQL()
