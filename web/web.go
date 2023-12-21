@@ -98,6 +98,29 @@ func (s *Server) handlePostUsers() http.Handler {
 	})
 }
 
+func (s *Server) handleGetUser() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		params := httptreemux.ContextParams(r.Context())
+		user, err := s.userRepo.FetchUserByName(r.Context(), params["name"])
+		w.Header().Set("content-type", "application/json")
+		switch {
+		case errors.Is(err, repos.ErrUserNameRequired):
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintln(w, `{"error":"user name required"}`)
+			return
+		case errors.Is(err, repos.ErrNotFound):
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintln(w, `{"error":"not found"}`)
+			return
+		case err != nil:
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintln(w, `{"error":"failed to fetch the user"}`)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(user)
+	})
+}
+
 func (s *Server) handler() http.Handler {
 	m := httptreemux.NewContextMux()
 	m.UseHandler(withOtel)
@@ -105,6 +128,7 @@ func (s *Server) handler() http.Handler {
 	m.UseHandler(apartment.InjectTenantFromHeader())
 	m.UseHandler(apartment.Middleware(s.apHandler))
 	m.Handler(http.MethodPost, "/users", s.handlePostUsers())
+	m.Handler(http.MethodGet, "/users/:name", s.handleGetUser())
 	return m
 }
 

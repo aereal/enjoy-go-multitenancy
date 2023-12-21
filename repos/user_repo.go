@@ -2,6 +2,7 @@ package repos
 
 import (
 	"context"
+	"database/sql"
 	"enjoymultitenancy/apartment"
 	"errors"
 	"fmt"
@@ -10,12 +11,14 @@ import (
 	_ "github.com/doug-martin/goqu/v9/dialect/mysql"
 	"github.com/rs/xid"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
 var (
 	ErrUserNameRequired = errors.New("user.name is required")
+	ErrNotFound         = errors.New("not found")
 )
 
 type NewUserRepoOption func(r *UserRepo)
@@ -46,6 +49,11 @@ type UserToRegister struct {
 type userToRegisterDTO struct {
 	*UserToRegister
 	ID string `db:"id"`
+}
+
+type User struct {
+	ID   string `db:"id"`
+	Name string `db:"name"`
 }
 
 func (r *UserRepo) RegisterUser(ctx context.Context, user *UserToRegister) (err error) {
@@ -80,4 +88,41 @@ func (r *UserRepo) RegisterUser(ctx context.Context, user *UserToRegister) (err 
 	}
 
 	return nil
+}
+
+func (r *UserRepo) FetchUserByName(ctx context.Context, name string) (_ *User, err error) {
+	ctx, span := r.tracer.Start(ctx, "FetchUserByName", trace.WithAttributes(attribute.String("user.name", name)))
+	defer span.End()
+	defer func() {
+		span.SetStatus(codes.Ok, "")
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
+	if name == "" {
+		return nil, ErrUserNameRequired
+	}
+
+	query, args, err := goqu.Dialect("mysql").From("users").
+		Where(goqu.C("name").Eq(name)).
+		Limit(1).
+		ToSQL()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build query: %w", err)
+	}
+
+	conn, err := r.manager.ExtractConnection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	user := new(User)
+	if err := conn.GetContext(ctx, user, query, args...); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return user, nil
 }
