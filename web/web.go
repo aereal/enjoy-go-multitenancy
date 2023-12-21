@@ -2,9 +2,13 @@ package web
 
 import (
 	"context"
+	"encoding/json"
+	"enjoymultitenancy/apartment"
 	"enjoymultitenancy/logging"
+	"enjoymultitenancy/repos"
 	"errors"
 	"fmt"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httptrace"
@@ -21,6 +25,7 @@ import (
 var (
 	defaultShutdownGrace = time.Second * 5
 	defaultPort          = "8080"
+	mediaTypeJSON        = "application/json"
 )
 
 func NewServer(optFns ...NewServerOption) *Server {
@@ -47,14 +52,61 @@ func WithShutdownGrace(grace time.Duration) NewServerOption {
 	return func(s *Server) { s.shutdownGrace = grace }
 }
 
+func WithUserRepo(ur *repos.UserRepo) NewServerOption {
+	return func(s *Server) { s.userRepo = ur }
+}
+
+func WithApartmentHandler(h *apartment.Manager) NewServerOption {
+	return func(s *Server) { s.apHandler = h }
+}
+
 type Server struct {
 	shutdownGrace time.Duration
 	port          string
+	userRepo      *repos.UserRepo
+	apHandler     *apartment.Manager
+}
+
+type errorResponse struct {
+	Error string `json:"error"`
+}
+
+func (s *Server) handlePostUsers() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		ctx := r.Context()
+		logger := logging.FromContext(ctx)
+		logger.Info("handle POST /users")
+		w.Header().Set("content-type", mediaTypeJSON)
+		if mt, _, _ := mime.ParseMediaType(r.Header.Get("content-type")); mt != mediaTypeJSON {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: fmt.Sprintf("invalid request content type: %s", mt)})
+			return
+		}
+		defer r.Body.Close()
+		userToRegister := new(repos.UserToRegister)
+		if err := json.NewDecoder(r.Body).Decode(userToRegister); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: fmt.Sprintf("failed to decode request body: %s", err)})
+			return
+		}
+		if err := s.userRepo.RegisterUser(ctx, userToRegister); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: fmt.Sprintf("failed to register user: %s", err)})
+			return
+		}
+	})
 }
 
 func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
-	return otelhttp.NewHandler(mux, "server",
+	mux.Handle("/users", s.handlePostUsers())
+	handler := apartment.InjectTenantFromHeader()(apartment.Middleware(s.apHandler)(mux))
+	return otelhttp.NewHandler(handler, "server",
 		otelhttp.WithPublicEndpoint(),
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string { return fmt.Sprintf("%s %s", r.Method, r.URL.Path) }),
 		otelhttp.WithClientTrace(func(ctx context.Context) *httptrace.ClientTrace { return otelhttptrace.NewClientTrace(ctx) }))

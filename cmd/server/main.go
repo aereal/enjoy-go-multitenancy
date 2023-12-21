@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"enjoymultitenancy/adapters"
+	"enjoymultitenancy/apartment"
 	"enjoymultitenancy/logging"
+	"enjoymultitenancy/repos"
 	"enjoymultitenancy/web"
 	"fmt"
 	"os"
@@ -37,7 +40,19 @@ func run() int {
 		}
 	}()
 	otel.SetTracerProvider(tp)
-	srv := web.NewServer(web.WithPort(os.Getenv("PORT")))
+	db, err := adapters.OpenDB(os.Getenv("DSN"))
+	if err != nil {
+		logger.Error("failed to create DB", zap.Error(err))
+		return 1
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			logger.Warn("failed to gracefully close DB connection", zap.Error(err))
+		}
+	}()
+	apHandler := apartment.New(db)
+	userRepo := repos.NewUserRepo(repos.WithApartment(apHandler))
+	srv := web.NewServer(web.WithUserRepo(userRepo), web.WithPort(os.Getenv("PORT")), web.WithApartmentHandler(apHandler))
 	if err := srv.Start(ctx); err != nil {
 		logger.Error("failed to start server", zap.Error(err))
 		return 1
