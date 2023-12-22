@@ -2,6 +2,7 @@ package apartment
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"enjoymultitenancy/logging"
 	"errors"
@@ -10,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jmoiron/sqlx"
 	"github.com/rs/xid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -52,34 +52,43 @@ func defaultGetTenant(ctx context.Context) (Tenant, bool) {
 	return tenant, ok
 }
 
-// New returns new Manager.
-func New(db *sqlx.DB) *Manager {
-	h := &Manager{db: db, conns: make(map[xid.ID]*sqlx.Conn)}
-	if h.getTenant == nil {
-		h.getTenant = defaultGetTenant
+type GetConnFn[DB DBish, Conn Connish] func(ctx context.Context, db DB) (Conn, error)
+
+// New returns new Apartment.
+func New[DB DBish, Conn Connish](db DB, getConn GetConnFn[DB, Conn]) *Apartment[DB, Conn] {
+	a := &Apartment[DB, Conn]{
+		db:      db,
+		conns:   make(map[xid.ID]Conn),
+		getConn: getConn,
 	}
-	return h
+	if a.getTenant == nil {
+		a.getTenant = defaultGetTenant
+	}
+	return a
 }
 
-type Manager struct {
-	db        *sqlx.DB
+type Apartment[DB DBish, Conn Connish] struct {
+	db        DB
 	getTenant func(ctx context.Context) (Tenant, bool)
 	mux       sync.Mutex
-	conns     map[xid.ID]*sqlx.Conn
+	conns     map[xid.ID]Conn
+	getConn   GetConnFn[DB, Conn]
 }
 
-func (h *Manager) ExtractConnection(ctx context.Context) (*sqlx.Conn, error) {
+func (h *Apartment[DB, Conn]) ExtractConnection(ctx context.Context) (conn Conn, err error) {
 	reqID, ok := RequestIDFromContext(ctx)
 	if !ok {
-		return nil, ErrNoConnectionBound
+		err = ErrNoConnectionBound
+		return
 	}
 	h.mux.Lock()
 	defer h.mux.Unlock()
-	conn, ok := h.conns[reqID]
+	conn, ok = h.conns[reqID]
 	if !ok {
-		return nil, ErrNoConnectionBound
+		err = ErrNoConnectionBound
+		return
 	}
-	return conn, nil
+	return
 }
 
 func InjectTenantFromHeader() func(http.Handler) http.Handler {
@@ -94,7 +103,7 @@ func InjectTenantFromHeader() func(http.Handler) http.Handler {
 	}
 }
 
-func Middleware(h *Manager) func(http.Handler) http.Handler {
+func (h *Apartment[DB, Conn]) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
@@ -108,7 +117,7 @@ func Middleware(h *Manager) func(http.Handler) http.Handler {
 			ctx = WithTenant(ctx, tenant)
 			logger = logger.With(zap.String("tenant", string(tenant)))
 			logger.Info("open new connection")
-			conn, err := h.db.Connx(ctx)
+			conn, err := h.getConn(ctx, h.db)
 			if err != nil {
 				logger.Warn("failed to open connection", zap.Error(err))
 				respondError(w, http.StatusInternalServerError, "failed to open new connection")
@@ -148,4 +157,37 @@ func respondError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("content-type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": msg})
+}
+
+type Beginner interface {
+	BeginTx(context.Context, *sql.TxOptions) (*sql.Tx, error)
+}
+
+type Closer interface {
+	Close() error
+}
+
+type Common interface {
+	PingContext(context.Context) error
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	PrepareContext(context.Context, string) (*sql.Stmt, error)
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+type DBish interface {
+	Beginner
+	Closer
+	Common
+	Stats() sql.DBStats
+	SetConnMaxIdleTime(time.Duration)
+	SetConnMaxLifetime(time.Duration)
+	SetMaxIdleConns(int)
+	SetMaxOpenConns(int)
+}
+
+type Connish interface {
+	Beginner
+	Closer
+	Common
 }

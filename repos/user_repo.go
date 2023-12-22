@@ -9,6 +9,7 @@ import (
 
 	"github.com/doug-martin/goqu/v9"
 	_ "github.com/doug-martin/goqu/v9/dialect/mysql"
+	"github.com/jmoiron/sqlx"
 	"github.com/rs/xid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -23,7 +24,7 @@ var (
 
 type NewUserRepoOption func(r *UserRepo)
 
-func WithApartment(mng *apartment.Manager) NewUserRepoOption {
+func WithApartment(mng *apartment.Apartment[*sqlx.DB, *sqlx.Conn]) NewUserRepoOption {
 	return func(r *UserRepo) { r.manager = mng }
 }
 
@@ -40,7 +41,7 @@ func NewUserRepo(optFns ...NewUserRepoOption) *UserRepo {
 
 type UserRepo struct {
 	tracer  trace.Tracer
-	manager *apartment.Manager
+	manager *apartment.Apartment[*sqlx.DB, *sqlx.Conn]
 	tables  struct {
 		users *goqu.SelectDataset
 	}

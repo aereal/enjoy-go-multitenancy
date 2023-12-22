@@ -11,6 +11,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -50,9 +51,9 @@ func run() int {
 			logger.Warn("failed to gracefully close DB connection", zap.Error(err))
 		}
 	}()
-	apHandler := apartment.New(db)
-	userRepo := repos.NewUserRepo(repos.WithApartment(apHandler))
-	srv := web.NewServer(web.WithUserRepo(userRepo), web.WithPort(os.Getenv("PORT")), web.WithApartmentHandler(apHandler))
+	ap := apartment.New[*sqlx.DB, *sqlx.Conn](db, func(ctx context.Context, db *sqlx.DB) (*sqlx.Conn, error) { return db.Connx(ctx) })
+	userRepo := repos.NewUserRepo(repos.WithApartment(ap))
+	srv := web.NewServer(web.WithUserRepo(userRepo), web.WithPort(os.Getenv("PORT")), web.WithApartmentMiddleware(ap.Middleware()))
 	if err := srv.Start(ctx); err != nil {
 		logger.Error("failed to start server", zap.Error(err))
 		return 1

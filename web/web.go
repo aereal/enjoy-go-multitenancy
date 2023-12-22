@@ -57,15 +57,15 @@ func WithUserRepo(ur *repos.UserRepo) NewServerOption {
 	return func(s *Server) { s.userRepo = ur }
 }
 
-func WithApartmentHandler(h *apartment.Manager) NewServerOption {
-	return func(s *Server) { s.apHandler = h }
+func WithApartmentMiddleware(mw func(http.Handler) http.Handler) NewServerOption {
+	return func(s *Server) { s.apartmentMiddleware = mw }
 }
 
 type Server struct {
-	shutdownGrace time.Duration
-	port          string
-	userRepo      *repos.UserRepo
-	apHandler     *apartment.Manager
+	shutdownGrace       time.Duration
+	port                string
+	userRepo            *repos.UserRepo
+	apartmentMiddleware func(http.Handler) http.Handler
 }
 
 type errorResponse struct {
@@ -126,7 +126,7 @@ func (s *Server) handler() http.Handler {
 	m.UseHandler(withOtel)
 	m.UseHandler(logging.Middleware())
 	m.UseHandler(apartment.InjectTenantFromHeader())
-	m.UseHandler(apartment.Middleware(s.apHandler))
+	m.UseHandler(s.apartmentMiddleware)
 	m.Handler(http.MethodPost, "/users", s.handlePostUsers())
 	m.Handler(http.MethodGet, "/users/:name", s.handleGetUser())
 	return m
