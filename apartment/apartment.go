@@ -36,13 +36,11 @@ func WithTenant(ctx context.Context, tenant Tenant) context.Context {
 	return context.WithValue(ctx, tenantCtxKey{}, tenant)
 }
 
-// ContextWithRequestID returns new context that contains current request ID.
-func ContextWithRequestID(ctx context.Context, id xid.ID) context.Context {
+func contextWithRequestID(ctx context.Context, id xid.ID) context.Context {
 	return context.WithValue(ctx, reqIDCtxKey{}, id)
 }
 
-// RequestIDFromContext extracts request ID from the context.
-func RequestIDFromContext(ctx context.Context) (xid.ID, bool) {
+func requestIDFromContext(ctx context.Context) (xid.ID, bool) {
 	id, ok := ctx.Value(reqIDCtxKey{}).(xid.ID)
 	return id, ok
 }
@@ -67,7 +65,7 @@ type Apartment[DB DBish, Conn Connish] struct {
 }
 
 func (h *Apartment[DB, Conn]) ExtractConnection(ctx context.Context) (conn Conn, err error) {
-	reqID, ok := RequestIDFromContext(ctx)
+	reqID, ok := requestIDFromContext(ctx)
 	if !ok {
 		err = ErrNoConnectionBound
 		return
@@ -159,7 +157,7 @@ func (h *Apartment[DB, Conn]) Middleware(opts ...MiddlewareOption) func(http.Han
 				delete(h.conns, reqID)
 				h.mux.Unlock()
 			}()
-			next.ServeHTTP(w, r.WithContext(ContextWithRequestID(ctx, reqID)))
+			next.ServeHTTP(w, r.WithContext(contextWithRequestID(ctx, reqID)))
 		})
 	}
 }
