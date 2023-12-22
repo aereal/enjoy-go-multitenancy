@@ -20,6 +20,9 @@ import (
 	"github.com/dimfeld/httptreemux/v5"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
+	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -124,6 +127,7 @@ func (s *Server) handleGetUser() http.Handler {
 func (s *Server) handler() http.Handler {
 	m := httptreemux.NewContextMux()
 	m.UseHandler(withOtel)
+	m.UseHandler(injectRouteAttrs)
 	m.UseHandler(logging.Middleware())
 	m.UseHandler(apartment.InjectTenantFromHeader())
 	m.UseHandler(s.apartmentMiddleware)
@@ -137,6 +141,24 @@ func withOtel(next http.Handler) http.Handler {
 		otelhttp.WithPublicEndpoint(),
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string { return fmt.Sprintf("%s %s", r.Method, r.URL.Path) }),
 		otelhttp.WithClientTrace(func(ctx context.Context) *httptrace.ClientTrace { return otelhttptrace.NewClientTrace(ctx) }))
+}
+
+func injectRouteAttrs(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		if span := trace.SpanFromContext(ctx); span.IsRecording() {
+			if data := httptreemux.ContextData(ctx); data != nil {
+				params := data.Params()
+				attrs := make([]attribute.KeyValue, 0, len(params)+1)
+				attrs = append(attrs, semconv.HTTPRoute(data.Route()))
+				for k, v := range data.Params() {
+					attrs = append(attrs, attribute.String(fmt.Sprintf("http.path_parameters.%s", k), v))
+				}
+				span.SetAttributes(attrs...)
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) Start(ctx context.Context) error {
