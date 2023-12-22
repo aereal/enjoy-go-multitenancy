@@ -3,7 +3,6 @@ package web
 import (
 	"context"
 	"encoding/json"
-	"enjoymultitenancy/apartment"
 	"enjoymultitenancy/logging"
 	"enjoymultitenancy/repos"
 	"errors"
@@ -129,7 +128,6 @@ func (s *Server) handler() http.Handler {
 	m.UseHandler(withOtel)
 	m.UseHandler(injectRouteAttrs)
 	m.UseHandler(logging.Middleware())
-	m.UseHandler(apartment.InjectTenantFromHeader())
 	m.UseHandler(s.apartmentMiddleware)
 	m.Handler(http.MethodPost, "/users", s.handlePostUsers())
 	m.Handler(http.MethodGet, "/users/:name", s.handleGetUser())

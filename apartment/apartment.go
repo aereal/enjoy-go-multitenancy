@@ -47,11 +47,6 @@ func RequestIDFromContext(ctx context.Context) (xid.ID, bool) {
 	return id, ok
 }
 
-func defaultGetTenant(ctx context.Context) (Tenant, bool) {
-	tenant, ok := ctx.Value(tenantCtxKey{}).(Tenant)
-	return tenant, ok
-}
-
 type GetConnFn[DB DBish, Conn Connish] func(ctx context.Context, db DB) (Conn, error)
 
 // New returns new Apartment.
@@ -61,18 +56,14 @@ func New[DB DBish, Conn Connish](db DB, getConn GetConnFn[DB, Conn]) *Apartment[
 		conns:   make(map[xid.ID]Conn),
 		getConn: getConn,
 	}
-	if a.getTenant == nil {
-		a.getTenant = defaultGetTenant
-	}
 	return a
 }
 
 type Apartment[DB DBish, Conn Connish] struct {
-	db        DB
-	getTenant func(ctx context.Context) (Tenant, bool)
-	mux       sync.Mutex
-	conns     map[xid.ID]Conn
-	getConn   GetConnFn[DB, Conn]
+	db      DB
+	mux     sync.Mutex
+	conns   map[xid.ID]Conn
+	getConn GetConnFn[DB, Conn]
 }
 
 func (h *Apartment[DB, Conn]) ExtractConnection(ctx context.Context) (conn Conn, err error) {
@@ -91,28 +82,48 @@ func (h *Apartment[DB, Conn]) ExtractConnection(ctx context.Context) (conn Conn,
 	return
 }
 
-func InjectTenantFromHeader() func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			tenant := Tenant(r.Header.Get("tenant-id"))
-			if tenant != "" {
-				trace.SpanFromContext(r.Context()).SetAttributes(attribute.String("tenant.name", string(tenant)))
+type middlewareConfig struct {
+	getTenant func(r *http.Request) (Tenant, bool)
+}
+
+type MiddlewareOption func(cfg *middlewareConfig)
+
+func GetTenantFromHeader(headerName string) MiddlewareOption {
+	return func(cfg *middlewareConfig) {
+		cfg.getTenant = func(r *http.Request) (Tenant, bool) {
+			v := r.Header.Get(headerName)
+			if v == "" {
+				return Tenant(""), false
 			}
-			next.ServeHTTP(w, r.WithContext(WithTenant(r.Context(), tenant)))
-		})
+			return Tenant(v), true
+		}
 	}
 }
 
-func (h *Apartment[DB, Conn]) Middleware() func(http.Handler) http.Handler {
+func failsToDetermineTenant(_ *http.Request) (_ Tenant, _ bool) { return }
+
+var tenantNameKey = attribute.Key("tenant.name")
+
+func (h *Apartment[DB, Conn]) Middleware(opts ...MiddlewareOption) func(http.Handler) http.Handler {
+	var cfg middlewareConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
+	if cfg.getTenant == nil {
+		cfg.getTenant = failsToDetermineTenant
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
 			logger := logging.FromContext(ctx)
-			tenant, ok := h.getTenant(ctx)
+			tenant, ok := cfg.getTenant(r)
 			if !ok {
 				logger.Warn("no tenant found")
 				respondError(w, http.StatusBadRequest, "no tenant found")
 				return
+			}
+			if span := trace.SpanFromContext(ctx); span.IsRecording() {
+				span.SetAttributes(tenantNameKey.String(string(tenant)))
 			}
 			ctx = WithTenant(ctx, tenant)
 			logger = logger.With(zap.String("tenant", string(tenant)))

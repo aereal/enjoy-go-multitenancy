@@ -53,7 +53,8 @@ func run() int {
 	}()
 	ap := apartment.New[*sqlx.DB, *sqlx.Conn](db, func(ctx context.Context, db *sqlx.DB) (*sqlx.Conn, error) { return db.Connx(ctx) })
 	userRepo := repos.NewUserRepo(repos.WithApartment(ap))
-	srv := web.NewServer(web.WithUserRepo(userRepo), web.WithPort(os.Getenv("PORT")), web.WithApartmentMiddleware(ap.Middleware()))
+	apMiddleware := ap.Middleware(apartment.GetTenantFromHeader("tenant-id"))
+	srv := web.NewServer(web.WithUserRepo(userRepo), web.WithPort(os.Getenv("PORT")), web.WithApartmentMiddleware(apMiddleware))
 	if err := srv.Start(ctx); err != nil {
 		logger.Error("failed to start server", zap.Error(err))
 		return 1
