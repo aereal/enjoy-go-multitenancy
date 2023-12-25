@@ -3,10 +3,10 @@ package repos
 import (
 	"context"
 	"database/sql"
-	"enjoymultitenancy/apartment"
 	"errors"
 	"fmt"
 
+	"github.com/aereal/nagaya"
 	"github.com/doug-martin/goqu/v9"
 	_ "github.com/doug-martin/goqu/v9/dialect/mysql"
 	"github.com/jmoiron/sqlx"
@@ -24,8 +24,8 @@ var (
 
 type NewUserRepoOption func(r *UserRepo)
 
-func WithApartment(mng *apartment.Apartment[*sqlx.DB, *sqlx.Conn]) NewUserRepoOption {
-	return func(r *UserRepo) { r.manager = mng }
+func WithNagaya(ngy *nagaya.Nagaya[*sqlx.DB, *sqlx.Conn]) NewUserRepoOption {
+	return func(r *UserRepo) { r.ngy = ngy }
 }
 
 func NewUserRepo(optFns ...NewUserRepoOption) *UserRepo {
@@ -40,9 +40,9 @@ func NewUserRepo(optFns ...NewUserRepoOption) *UserRepo {
 }
 
 type UserRepo struct {
-	tracer  trace.Tracer
-	manager *apartment.Apartment[*sqlx.DB, *sqlx.Conn]
-	tables  struct {
+	tracer trace.Tracer
+	ngy    *nagaya.Nagaya[*sqlx.DB, *sqlx.Conn]
+	tables struct {
 		users *goqu.SelectDataset
 	}
 }
@@ -85,7 +85,7 @@ func (r *UserRepo) RegisterUser(ctx context.Context, user *UserToRegister) (err 
 		return fmt.Errorf("failed to build query: %w", err)
 	}
 
-	conn, err := r.manager.ExtractConnection(ctx)
+	conn, err := r.ngy.ObtainConnection(ctx)
 	if err != nil {
 		return err
 	}
@@ -120,7 +120,7 @@ func (r *UserRepo) FetchUserByName(ctx context.Context, name string) (_ *User, e
 		return nil, fmt.Errorf("failed to build query: %w", err)
 	}
 
-	conn, err := r.manager.ExtractConnection(ctx)
+	conn, err := r.ngy.ObtainConnection(ctx)
 	if err != nil {
 		return nil, err
 	}
