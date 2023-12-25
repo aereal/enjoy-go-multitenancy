@@ -2,67 +2,27 @@ package logging
 
 import (
 	"context"
-	"net/http"
+	"log/slog"
+	"os"
 
 	"go.opentelemetry.io/otel/trace"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
-type ctxKey struct{}
-
-var (
-	defaultConfig = &zap.Config{
-		Level:            zap.NewAtomicLevelAt(zapcore.InfoLevel),
-		Encoding:         "json",
-		OutputPaths:      []string{"stdout"},
-		ErrorOutputPaths: []string{"stdout"},
-		EncoderConfig: zapcore.EncoderConfig{
-			MessageKey:     "msg",
-			LevelKey:       "severity",
-			TimeKey:        "time",
-			NameKey:        "logger",
-			CallerKey:      "caller",
-			StacktraceKey:  "stacktrace",
-			LineEnding:     zapcore.DefaultLineEnding,
-			EncodeLevel:    zapcore.LowercaseLevelEncoder,
-			EncodeTime:     zapcore.ISO8601TimeEncoder,
-			EncodeDuration: zapcore.MillisDurationEncoder,
-			EncodeCaller:   zapcore.ShortCallerEncoder,
-		},
-	}
-)
-
-func FromContext(ctx context.Context) *zap.Logger {
-	if logger, ok := ctx.Value(ctxKey{}).(*zap.Logger); ok {
-		return logger
-	}
-	return zap.NewNop()
+func Init() {
+	opts := &slog.HandlerOptions{AddSource: true}
+	handler := &otelTraceIDHandler{Handler: slog.NewJSONHandler(os.Stdout, opts)}
+	slog.SetDefault(slog.New(handler))
 }
 
-func WithLogger(ctx context.Context, logger *zap.Logger) context.Context {
-	return context.WithValue(ctx, ctxKey{}, logger)
+type otelTraceIDHandler struct {
+	slog.Handler
 }
 
-func New() *zap.Logger {
-	l, err := defaultConfig.Build()
-	if err != nil {
-		return zap.NewNop()
-	}
-	return l
-}
+var _ slog.Handler = (*otelTraceIDHandler)(nil)
 
-func Middleware() func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := r.Context()
-			sc := trace.SpanContextFromContext(ctx)
-			if !sc.IsValid() {
-				next.ServeHTTP(w, r)
-				return
-			}
-			logger := FromContext(ctx).With(zap.Stringer("otel.trace_id", sc.TraceID()), zap.Stringer("otel.span_id", sc.SpanID()))
-			next.ServeHTTP(w, r.WithContext(WithLogger(ctx, logger)))
-		})
+func (h *otelTraceIDHandler) Handle(ctx context.Context, record slog.Record) error {
+	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
+		record.AddAttrs(slog.String("otel.trace_id", sc.TraceID().String()), slog.String("otel.span_id", sc.SpanID().String()))
 	}
+	return h.Handler.Handle(ctx, record)
 }

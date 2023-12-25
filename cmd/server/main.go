@@ -7,6 +7,7 @@ import (
 	"enjoymultitenancy/repos"
 	"enjoymultitenancy/web"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -17,7 +18,6 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
-	"go.uber.org/zap"
 )
 
 func main() {
@@ -25,30 +25,29 @@ func main() {
 }
 
 func run() int {
-	logger := logging.New()
-	defer func() { _ = logger.Sync() }()
-	ctx := logging.WithLogger(context.Background(), logger)
+	logging.Init()
+	ctx := context.Background()
 	tp, err := setupOtel(ctx)
 	if err != nil {
-		logger.Error("failed to setup OpenTelemetry instrumentation", zap.Error(err))
+		slog.ErrorContext(ctx, "failed to setup OpenTelemetry instrumentation", slog.String("error", err.Error()))
 		return 1
 	}
 	defer func() {
 		ctx, cancel := context.WithTimeout(ctx, time.Second*5)
 		defer cancel()
 		if err := tp.Shutdown(ctx); err != nil {
-			logger.Warn("failed to shutdown TracerProvider", zap.Error(err))
+			slog.WarnContext(ctx, "failed to shutdown TracerProvider", slog.String("error", err.Error()))
 		}
 	}()
 	otel.SetTracerProvider(tp)
 	db, err := adapters.OpenDB(os.Getenv("DSN"))
 	if err != nil {
-		logger.Error("failed to create DB", zap.Error(err))
+		slog.ErrorContext(ctx, "failed to create DB", slog.String("error", err.Error()))
 		return 1
 	}
 	defer func() {
 		if err := db.Close(); err != nil {
-			logger.Warn("failed to gracefully close DB connection", zap.Error(err))
+			slog.WarnContext(ctx, "failed to gracefully close DB connection", slog.String("error", err.Error()))
 		}
 	}()
 	ngy := nagaya.New[*sqlx.DB, *sqlx.Conn](db, func(ctx context.Context, db *sqlx.DB) (*sqlx.Conn, error) { return db.Connx(ctx) })
@@ -56,7 +55,7 @@ func run() int {
 	mw := nagaya.Middleware[*sqlx.DB, *sqlx.Conn](ngy, nagaya.GetTenantFromHeader("tenant-id"))
 	srv := web.NewServer(web.WithUserRepo(userRepo), web.WithPort(os.Getenv("PORT")), web.WithApartmentMiddleware(mw))
 	if err := srv.Start(ctx); err != nil {
-		logger.Error("failed to start server", zap.Error(err))
+		slog.ErrorContext(ctx, "failed to start server", slog.String("error", err.Error()))
 		return 1
 	}
 	return 0

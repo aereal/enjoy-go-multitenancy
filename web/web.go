@@ -3,10 +3,10 @@ package web
 import (
 	"context"
 	"encoding/json"
-	"enjoymultitenancy/logging"
 	"enjoymultitenancy/repos"
 	"errors"
 	"fmt"
+	"log/slog"
 	"mime"
 	"net"
 	"net/http"
@@ -22,7 +22,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 	"go.opentelemetry.io/otel/trace"
-	"go.uber.org/zap"
 )
 
 var (
@@ -77,8 +76,7 @@ type errorResponse struct {
 func (s *Server) handlePostUsers() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		logger := logging.FromContext(ctx)
-		logger.Info("handle POST /users")
+		slog.InfoContext(ctx, "handle POST /users")
 		w.Header().Set("content-type", mediaTypeJSON)
 		if mt, _, _ := mime.ParseMediaType(r.Header.Get("content-type")); mt != mediaTypeJSON {
 			w.WriteHeader(http.StatusBadRequest)
@@ -127,7 +125,6 @@ func (s *Server) handler() http.Handler {
 	m := httptreemux.NewContextMux()
 	m.UseHandler(withOtel)
 	m.UseHandler(injectRouteAttrs)
-	m.UseHandler(logging.Middleware())
 	m.UseHandler(s.apartmentMiddleware)
 	m.Handler(http.MethodPost, "/users", s.handlePostUsers())
 	m.Handler(http.MethodGet, "/users/:name", s.handleGetUser())
@@ -160,27 +157,22 @@ func injectRouteAttrs(next http.Handler) http.Handler {
 }
 
 func (s *Server) Start(ctx context.Context) error {
-	logger := logging.FromContext(ctx)
-	reqLogger := logger.Named("http")
 	hs := &http.Server{
 		Handler: s.handler(),
 		Addr:    net.JoinHostPort("localhost", s.port),
-		BaseContext: func(l net.Listener) context.Context {
-			return logging.WithLogger(context.Background(), reqLogger)
-		},
 	}
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	go func() {
 		<-ctx.Done()
-		logger.Info("shutting down server", zap.Duration("grace", s.shutdownGrace))
+		slog.InfoContext(ctx, "shutting down server", slog.Duration("grace", s.shutdownGrace))
 		ctx, cancel := context.WithTimeout(ctx, s.shutdownGrace)
 		defer cancel()
 		if err := hs.Shutdown(ctx); err != nil {
-			logger.Warn("cannot shut down server gracefully", zap.Error(err))
+			slog.WarnContext(ctx, "cannot shut down server gracefully", slog.String("error", err.Error()))
 		}
 	}()
-	logger.Info("start server", zap.String("port", s.port))
+	slog.InfoContext(ctx, "start server", slog.String("port", s.port))
 	if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
