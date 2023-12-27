@@ -134,8 +134,15 @@ func (s *Server) handler() http.Handler {
 func withOtel(next http.Handler) http.Handler {
 	return otelhttp.NewHandler(next, "server",
 		otelhttp.WithPublicEndpoint(),
-		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string { return fmt.Sprintf("%s %s", r.Method, r.URL.Path) }),
+		otelhttp.WithSpanNameFormatter(formatSpanName),
 		otelhttp.WithClientTrace(func(ctx context.Context) *httptrace.ClientTrace { return otelhttptrace.NewClientTrace(ctx) }))
+}
+
+func formatSpanName(_ string, r *http.Request) string {
+	if route := httptreemux.ContextRoute(r.Context()); route != "" {
+		return fmt.Sprintf("%s %s", r.Method, route)
+	}
+	return fmt.Sprintf("%s %s", r.Method, r.URL.Path)
 }
 
 func injectRouteAttrs(next http.Handler) http.Handler {
