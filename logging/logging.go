@@ -10,6 +10,9 @@ import (
 
 func Init() {
 	opts := &slog.HandlerOptions{AddSource: true}
+	if os.Getenv("DEBUG") != "" {
+		opts.Level = levelerFunc(func() slog.Level { return slog.LevelDebug })
+	}
 	handler := &otelTraceIDHandler{Handler: slog.NewJSONHandler(os.Stdout, opts)}
 	slog.SetDefault(slog.New(handler))
 }
@@ -26,3 +29,9 @@ func (h *otelTraceIDHandler) Handle(ctx context.Context, record slog.Record) err
 	}
 	return h.Handler.Handle(ctx, record)
 }
+
+type levelerFunc func() slog.Level
+
+var _ slog.Leveler = (levelerFunc)(nil)
+
+func (f levelerFunc) Level() slog.Level { return f() }
