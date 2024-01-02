@@ -125,9 +125,10 @@ func (s *Server) handler() http.Handler {
 	m := httptreemux.NewContextMux()
 	m.UseHandler(withOtel)
 	m.UseHandler(injectRouteAttrs)
-	m.UseHandler(s.apartmentMiddleware)
-	m.Handler(http.MethodPost, "/users", s.handlePostUsers())
-	m.Handler(http.MethodGet, "/users/:name", s.handleGetUser())
+	tenantGroup := m.NewContextGroup("/tenant")
+	tenantGroup.UseHandler(s.apartmentMiddleware)
+	tenantGroup.Handler(http.MethodPost, "/users", s.handlePostUsers())
+	tenantGroup.Handler(http.MethodGet, "/users/:name", s.handleGetUser())
 	return m
 }
 
