@@ -15,6 +15,7 @@ services:
     environment:
       ZIPKIN_ORIGIN: 'http://zipkin:9411'
   mysql:
+    hostname: 'mysql.containers.internal'
     image: 'mysql:8.2.0'
     ports:
       - '3306:3306'

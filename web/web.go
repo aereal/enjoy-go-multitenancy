@@ -58,6 +58,8 @@ func WithUserRepo(ur *repos.UserRepo) NewServerOption {
 	return func(s *Server) { s.userRepo = ur }
 }
 
+func WithBlogRepo(br *repos.BlogRepo) NewServerOption { return func(s *Server) { s.blogRepo = br } }
+
 func WithApartmentMiddleware(mw func(http.Handler) http.Handler) NewServerOption {
 	return func(s *Server) { s.apartmentMiddleware = mw }
 }
@@ -66,6 +68,7 @@ type Server struct {
 	shutdownGrace       time.Duration
 	port                string
 	userRepo            *repos.UserRepo
+	blogRepo            *repos.BlogRepo
 	apartmentMiddleware func(http.Handler) http.Handler
 }
 
@@ -121,10 +124,86 @@ func (s *Server) handleGetUser() http.Handler {
 	})
 }
 
+func (s *Server) handlePostBlogs() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if mt, _, _ := mime.ParseMediaType(r.Header.Get("content-type")); mt != mediaTypeJSON {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: fmt.Sprintf("invalid request content type: %s", mt)})
+			return
+		}
+		defer r.Body.Close()
+		blogs := new(struct {
+			Blogs []*repos.BlogToCreate `json:"blogs"`
+		})
+		if err := json.NewDecoder(r.Body).Decode(blogs); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: fmt.Sprintf("failed to decode request body: %s", err)})
+			return
+		}
+		if err := s.blogRepo.CreateBlogs(r.Context(), blogs.Blogs); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: fmt.Sprintf("failed to create blog: %s", err)})
+			return
+		}
+	})
+}
+
+func (s *Server) handleGetBlog() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data := httptreemux.ContextParams(r.Context())
+		blogID := data["blog_id"]
+		slog.InfoContext(r.Context(), "handle GET /blog/:blog_id", slog.String("blog_id", blogID))
+		w.Header().Set("content-type", "application/json")
+		if blogID == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "empty blog_id"})
+			return
+		}
+		blog, err := s.blogRepo.FindBlogByID(r.Context(), blogID)
+		if errors.Is(err, repos.ErrBlogNotFound) {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: err.Error()})
+			return
+		}
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: err.Error()})
+		}
+		_ = json.NewEncoder(w).Encode(blog)
+	})
+}
+
+func (s *Server) handleUpdateBlog() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data := httptreemux.ContextParams(r.Context())
+		blogID := data["blog_id"]
+		slog.InfoContext(r.Context(), "handle PATCH /blog/:blog_id", slog.String("blog_id", blogID))
+		w.Header().Set("content-type", "application/json")
+		if blogID == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "empty blog_id"})
+			return
+		}
+		if err := s.blogRepo.UpdateBlog(r.Context(), blogID, repos.WithBlogName(r.URL.Query().Get("name"))); err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, repos.ErrNoUpdateClause) {
+				status = http.StatusBadRequest
+			}
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: err.Error()})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
 func (s *Server) handler() http.Handler {
 	m := httptreemux.NewContextMux()
 	m.UseHandler(withOtel)
 	m.UseHandler(injectRouteAttrs)
+	m.Handler(http.MethodPost, "/blogs", s.handlePostBlogs())
+	m.Handler(http.MethodGet, "/blogs/:blog_id", s.handleGetBlog())
+	m.Handler(http.MethodPatch, "/blogs/:blog_id", s.handleUpdateBlog())
 	tenantGroup := m.NewContextGroup("/tenant")
 	tenantGroup.UseHandler(s.apartmentMiddleware)
 	tenantGroup.Handler(http.MethodPost, "/users", s.handlePostUsers())

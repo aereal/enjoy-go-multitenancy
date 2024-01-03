@@ -53,7 +53,8 @@ func run() int {
 	ngy := nagaya.New[*sqlx.DB, *sqlx.Conn](db, func(ctx context.Context, db *sqlx.DB) (*sqlx.Conn, error) { return db.Connx(ctx) })
 	userRepo := repos.NewUserRepo(repos.WithNagaya(ngy))
 	mw := nagaya.Middleware[*sqlx.DB, *sqlx.Conn](ngy, nagaya.GetTenantFromHeader("tenant-id"))
-	srv := web.NewServer(web.WithUserRepo(userRepo), web.WithPort(os.Getenv("PORT")), web.WithApartmentMiddleware(mw))
+	blogRepo := repos.NewBlogRepo(repos.WithDB(db))
+	srv := web.NewServer(web.WithUserRepo(userRepo), web.WithPort(os.Getenv("PORT")), web.WithApartmentMiddleware(mw), web.WithBlogRepo(blogRepo))
 	if err := srv.Start(ctx); err != nil {
 		slog.ErrorContext(ctx, "failed to start server", slog.String("error", err.Error()))
 		return 1
