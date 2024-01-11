@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/XSAM/otelsql"
 	"github.com/go-sql-driver/mysql"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -31,7 +33,22 @@ func init() {
 	}
 }
 
-const driverName = "mysql"
+func OpenEventsDB(dsn string) (*sqlx.DB, error) {
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("url.Parse: %w", err)
+	}
+	attrs := make([]attribute.KeyValue, 0)
+	attrs = append(attrs, semconv.DBSystemPostgreSQL)
+	if userinfo := parsed.User; userinfo != nil {
+		attrs = append(attrs, semconv.DBUser(userinfo.Username()))
+	}
+	if hostname := parsed.Hostname(); hostname != "" {
+		attrs = append(attrs, semconv.NetTransportTCP, semconv.ServerAddress(hostname))
+	}
+	spanOptions := otelsql.SpanOptions{DisableErrSkip: true, SpanFilter: filterSpanForPostgres}
+	return open("pgx", dsn, spanOptions, attrs...)
+}
 
 func OpenDB(dsn string) (*sqlx.DB, error) {
 	cfg, err := mysql.ParseDSN(dsn)
@@ -40,14 +57,13 @@ func OpenDB(dsn string) (*sqlx.DB, error) {
 	}
 	cfg.ParseTime = true
 	cfg.Loc = dbLoc
-	defaultAttrs := buildDefaultAttrs(cfg)
+	return open("mysql", cfg.FormatDSN(), otelsql.SpanOptions{DisableErrSkip: true, SpanFilter: filterSpanForMySQL}, buildDefaultAttrs(cfg)...)
+}
+
+func open(driverName string, dsn string, spanOptions otelsql.SpanOptions, attrs ...attribute.KeyValue) (*sqlx.DB, error) {
 	store := &queryStore{queryCache: &mapCache{dirty: make(map[string]ast.StmtNode)}}
-	spanOptions := otelsql.SpanOptions{
-		DisableErrSkip: true,
-		SpanFilter:     filterSpan,
-	}
-	db, err := otelsql.Open(driverName, cfg.FormatDSN(),
-		otelsql.WithAttributes(defaultAttrs...),
+	db, err := otelsql.Open(driverName, dsn,
+		otelsql.WithAttributes(attrs...),
 		otelsql.WithAttributesGetter(store.attributesGetter),
 		otelsql.WithSpanNameFormatter(store.spanNameFormatter),
 		otelsql.WithSpanOptions(spanOptions))
@@ -57,9 +73,17 @@ func OpenDB(dsn string) (*sqlx.DB, error) {
 	return sqlx.NewDb(db, driverName), nil
 }
 
-func filterSpan(_ context.Context, method otelsql.Method, _ string, _ []driver.NamedValue) bool {
+func filterSpanForMySQL(_ context.Context, method otelsql.Method, _ string, _ []driver.NamedValue) bool {
 	switch method {
 	case otelsql.MethodRows, otelsql.MethodConnPrepare, otelsql.MethodConnPing, otelsql.MethodConnResetSession, otelsql.MethodConnQuery, otelsql.MethodConnExec:
+		return false
+	}
+	return true
+}
+
+func filterSpanForPostgres(_ context.Context, method otelsql.Method, _ string, _ []driver.NamedValue) bool {
+	switch method {
+	case otelsql.MethodRows, otelsql.MethodConnPrepare, otelsql.MethodConnPing, otelsql.MethodConnResetSession:
 		return false
 	}
 	return true

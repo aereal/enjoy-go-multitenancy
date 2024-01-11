@@ -60,6 +60,10 @@ func WithUserRepo(ur *repos.UserRepo) NewServerOption {
 
 func WithBlogRepo(br *repos.BlogRepo) NewServerOption { return func(s *Server) { s.blogRepo = br } }
 
+func WithEventsRepo(er *repos.EventsRepo) NewServerOption {
+	return func(s *Server) { s.eventsRepo = er }
+}
+
 func WithApartmentMiddleware(mw func(http.Handler) http.Handler) NewServerOption {
 	return func(s *Server) { s.apartmentMiddleware = mw }
 }
@@ -69,6 +73,7 @@ type Server struct {
 	port                string
 	userRepo            *repos.UserRepo
 	blogRepo            *repos.BlogRepo
+	eventsRepo          *repos.EventsRepo
 	apartmentMiddleware func(http.Handler) http.Handler
 }
 
@@ -197,6 +202,21 @@ func (s *Server) handleUpdateBlog() http.Handler {
 	})
 }
 
+func (s *Server) handleGetEvents() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		records, err := s.eventsRepo.FindRecords(r.Context())
+		w.Header().Set("content-type", "application/json")
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: err.Error()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(struct {
+			Records []*repos.Record `json:"records"`
+		}{Records: records})
+	})
+}
+
 func (s *Server) handler() http.Handler {
 	m := httptreemux.NewContextMux()
 	m.UseHandler(withOtel)
@@ -204,6 +224,7 @@ func (s *Server) handler() http.Handler {
 	m.Handler(http.MethodPost, "/blogs", s.handlePostBlogs())
 	m.Handler(http.MethodGet, "/blogs/:blog_id", s.handleGetBlog())
 	m.Handler(http.MethodPatch, "/blogs/:blog_id", s.handleUpdateBlog())
+	m.Handler(http.MethodGet, "/events", s.handleGetEvents())
 	tenantGroup := m.NewContextGroup("/tenant")
 	tenantGroup.UseHandler(s.apartmentMiddleware)
 	tenantGroup.Handler(http.MethodPost, "/users", s.handlePostUsers())

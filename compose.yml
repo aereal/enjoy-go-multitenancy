@@ -27,3 +27,15 @@ services:
     volumes:
       - './etc/ddl.sql:/docker-entrypoint-initdb.d/00_ddl.sql'
       - './var/db:/var/lib/mysql'
+  postgres:
+    image: 'postgres:16.1'
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_DB: events_local
+      POSTGRES_USER: events_user
+      POSTGRES_PASSWORD: events_passwd
+    volumes:
+      - './etc/ddl_postgres.sql:/docker-entrypoint-initdb.d/01_ddl.sql'
+      - './var/postgres:/var/lib/postgresql'
+    ports:
+      - '5432:5432'
